@@ -1,29 +1,20 @@
-name: hermes-cloud-tools-bundle
-label: Cloud Tools Bundle
-kind: general
+name: cloud_tools
 version: 1.0.0
-description: >
-  Integrated Hermes Agent Tool plugins bundle providing full control for:
-  1) Cloudflare KV storage (kv_get, kv_put, kv_list, kv_delete)
-  2) Diary system (write_diary, list_diaries, search_diaries, delete_diary)
-  3) Turtle SMS reminder (send_sms, create_sms_reminder, check_sms_quota)
-  4) Work Hour System (submit_work_report, list_work_reports, add_work_plan)
+description: "Hermes Cloud Tools Bundle — integrates Cloudflare KV, Diary, SMS, and Work Hour System."
 author: Agnes & fietiger
-requires_env: []
-optional_env:
-  - name: KVBOX_URL
-    description: "Cloudflare KV Worker URL (default: https://kv.benext.uk)"
-    prompt: "KV URL"
-    password: false
-  - name: DIARY_URL
-    description: "Diary Worker URL (default: https://diary.benext.uk)"
-    prompt: "Diary URL"
-    password: false
-  - name: SMS_URL
-    description: "Turtle SMS URL (default: https://sms.benext.uk)"
-    prompt: "SMS URL"
-    password: false
-  - name: WHS_URL
-    description: "Work Hour System URL (default: https://work-hour-system.pages.dev)"
-    prompt: "WHS URL"
-    password: false
+kind: backend
+provides_tools:
+  - kv_get
+  - kv_put
+  - kv_list
+  - kv_delete
+  - diary_write
+  - diary_list
+  - diary_search
+  - diary_delete
+  - sms_send
+  - sms_create_reminder
+  - sms_quota
+  - whs_add_report
+  - whs_list_reports
+  - whs_add_plan
