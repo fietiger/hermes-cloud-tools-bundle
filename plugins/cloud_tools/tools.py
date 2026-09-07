@@ -171,42 +171,34 @@ DIARY_DELETE_SCHEMA = {
 # ==============================================================================
 SMS_DEFAULT_URL = "https://sms.benext.uk"
 
-def _get_sms_token() -> str:
-    return os.getenv("SMS_TOKEN") or "sk-turtle-secret-token"
-
-def _sms_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
-    url = f"{os.getenv('SMS_URL', SMS_DEFAULT_URL).rstrip('/')}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {_get_sms_token()}")
-    req.add_header("User-Agent", "hermes-agent-tool/1.0")
-    if data:
-        req.add_header("Content-Type", "application/json")
+def _get_sms_client():
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read().decode())
-    except Exception as e:
-        return {"error": str(e)}
+        from clients.sms_client import SMSClient
+        return SMSClient()
+    except Exception:
+        import importlib.util
+        for p in ["/opt/data/clients/sms_client.py", "/root/.hermes/sms_client.py"]:
+            if os.path.exists(p):
+                spec = importlib.util.spec_from_file_location("sms_client", p)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return mod.SMSClient()
+    raise RuntimeError("无法初始化 SMSClient")
 
 def handle_sms_send(message: str, phone: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Send an instant SMS message."""
-    body = {"message": message}
-    if phone:
-        body["phone"] = phone
-    return _sms_req("POST", "/api/sms/send", body)
+    client = _get_sms_client()
+    return client.send(message=message, phone=phone)
 
 def handle_sms_create_reminder(title: str, message: str, run_at: str, **kwargs) -> Dict[str, Any]:
     """Create a scheduled SMS reminder."""
-    body = {
-        "title": title,
-        "message": message,
-        "run_at": run_at
-    }
-    return _sms_req("POST", "/api/sms/tasks", body)
+    client = _get_sms_client()
+    return client.create_once_task(message=message, run_at=run_at, title=title)
 
 def handle_sms_quota(**kwargs) -> Dict[str, Any]:
     """Check remaining SMS quota."""
-    return _sms_req("GET", "/api/sms/quota")
+    client = _get_sms_client()
+    return client.get_quota()
 
 SMS_SEND_SCHEMA = {
     "type": "object",
