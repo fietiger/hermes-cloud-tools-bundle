@@ -188,12 +188,12 @@ def _get_sms_client():
 def handle_sms_send(message: str, phone: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Send an instant SMS message."""
     client = _get_sms_client()
-    return client.send(message=message, phone=phone)
+    return client.send_sms(message=message, phone=phone)
 
 def handle_sms_create_reminder(title: str, message: str, run_at: str, **kwargs) -> Dict[str, Any]:
     """Create a scheduled SMS reminder."""
     client = _get_sms_client()
-    return client.create_once_task(message=message, run_at=run_at, title=title)
+    return client.create_task(message=message, run_at=run_at, title=title, frequency="once")
 
 def handle_sms_quota(**kwargs) -> Dict[str, Any]:
     """Check remaining SMS quota."""
