@@ -32,28 +32,31 @@ def _kv_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
     except Exception as e:
         return {"error": str(e)}
 
-def handle_kv_get(key: str, **kwargs) -> Dict[str, Any]:
+def handle_kv_list(prefix: str = "", limit: int = 100, **kwargs) -> str:
+    """List keys from Cloudflare KV with prefix."""
+    qs = urllib.parse.urlencode({"prefix": prefix, "limit": limit})
+    res = _kv_req("GET", f"/list?{qs}")
+    return json.dumps(res, ensure_ascii=False)
+
+def handle_kv_get(key: str, **kwargs) -> str:
     """Get value by key from Cloudflare KV."""
     res = _kv_req("GET", f"/keys/{key}")
     if res.get("error") == "not found":
-        return {"found": False, "key": key, "value": None}
-    return {"found": True, "key": key, "value": res.get("value", res)}
+        return json.dumps({"found": False, "key": key, "value": None}, ensure_ascii=False)
+    return json.dumps({"found": True, "key": key, "value": res.get("value", res)}, ensure_ascii=False)
 
-def handle_kv_put(key: str, value: Any, ttl: Optional[int] = None, **kwargs) -> Dict[str, Any]:
+def handle_kv_put(key: str, value: Any, ttl: Optional[int] = None, **kwargs) -> str:
     """Put key-value pair into Cloudflare KV."""
     body: Dict[str, Any] = {"value": value}
     if ttl:
         body["ttl"] = int(ttl)
-    return _kv_req("PUT", f"/keys/{key}", body)
+    res = _kv_req("PUT", f"/keys/{key}", body)
+    return json.dumps(res, ensure_ascii=False)
 
-def handle_kv_list(prefix: str = "", limit: int = 100, **kwargs) -> Dict[str, Any]:
-    """List keys from Cloudflare KV with prefix."""
-    qs = urllib.parse.urlencode({"prefix": prefix, "limit": limit})
-    return _kv_req("GET", f"/list?{qs}")
-
-def handle_kv_delete(key: str, **kwargs) -> Dict[str, Any]:
+def handle_kv_delete(key: str, **kwargs) -> str:
     """Delete a key from Cloudflare KV."""
-    return _kv_req("DELETE", f"/keys/{key}")
+    res = _kv_req("DELETE", f"/keys/{key}")
+    return json.dumps(res, ensure_ascii=False)
 
 KV_GET_SCHEMA = {
     "type": "object",
