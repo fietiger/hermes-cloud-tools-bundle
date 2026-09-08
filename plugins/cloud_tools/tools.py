@@ -306,7 +306,7 @@ WHS_ADD_PLAN_SCHEMA = {
 
 
 # ==============================================================================
-# Master Tools Registry List
+# Master Tools Registry List & Hermes Entrypoint
 # ==============================================================================
 ALL_TOOLS = (
     # KV Tools
@@ -331,3 +331,17 @@ ALL_TOOLS = (
     ("whs_list_reports", WHS_LIST_REPORTS_SCHEMA, handle_whs_list_reports, "📑"),
     ("whs_add_plan", WHS_ADD_PLAN_SCHEMA, handle_whs_add_plan, "📅"),
 )
+
+def register_tools(ctx) -> None:
+    """Standard Hermes v0.21 entrypoint for tool discovery."""
+    for name, schema, handler, emoji in ALL_TOOLS:
+        try:
+            ctx.register_tool(
+                name=name,
+                toolset="cloud_tools",
+                schema=schema,
+                handler=handler,
+                emoji=emoji,
+            )
+        except Exception:
+            pass
