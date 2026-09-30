@@ -193,10 +193,58 @@ def handle_sms_send(message: str, phone: Optional[str] = None, **kwargs) -> Dict
     client = _get_sms_client()
     return client.send_sms(message=message, phone=phone)
 
-def handle_sms_create_reminder(title: str, message: str, run_at: str, **kwargs) -> Dict[str, Any]:
-    """Create a scheduled SMS reminder."""
+def handle_sms_create_reminder(
+    title: str,
+    message: str,
+    run_at: Optional[str] = None,
+    frequency: str = "once",
+    delay_minutes: Optional[int] = None,
+    delay_hours: Optional[int] = None,
+    delay_days: Optional[int] = None,
+    weekday: Optional[int] = None,
+    weekly_time: Optional[str] = None,
+    monthly_day: Optional[int] = None,
+    auto_delete: bool = True,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Create a scheduled SMS reminder (one-shot, delayed, weekly, monthly, ...)."""
     client = _get_sms_client()
-    return client.create_task(message=message, run_at=run_at, title=title, frequency="once")
+    return client.create_task(
+        message=message,
+        title=title,
+        run_at=run_at,
+        frequency=frequency,
+        delay_minutes=delay_minutes,
+        delay_hours=delay_hours,
+        delay_days=delay_days,
+        weekday=weekday,
+        weekly_time=weekly_time,
+        monthly_day=monthly_day,
+        auto_delete=auto_delete,
+    )
+
+def handle_sms_list_reminders(limit: int = 50, **kwargs) -> Dict[str, Any]:
+    """List scheduled SMS reminder tasks."""
+    client = _get_sms_client()
+    tasks = client.get_tasks()
+    if isinstance(tasks, list):
+        tasks = tasks[: int(limit)]
+    return {"count": len(tasks) if isinstance(tasks, list) else 0, "tasks": tasks}
+
+def handle_sms_delete_reminder(task_id: str, **kwargs) -> Dict[str, Any]:
+    """Delete a scheduled SMS reminder task by id."""
+    client = _get_sms_client()
+    return client.delete_task(task_id)
+
+def handle_sms_toggle_reminder(task_id: str, enabled: bool = True, **kwargs) -> Dict[str, Any]:
+    """Enable or disable a scheduled SMS reminder task."""
+    client = _get_sms_client()
+    return client.toggle_task(task_id, enabled)
+
+def handle_sms_logs(limit: int = 50, **kwargs) -> Dict[str, Any]:
+    """Fetch recent SMS send history / delivery logs."""
+    client = _get_sms_client()
+    return {"logs": client.get_logs(limit=int(limit))}
 
 def handle_sms_quota(**kwargs) -> Dict[str, Any]:
     """Check remaining SMS quota."""
@@ -217,9 +265,64 @@ SMS_REMINDER_SCHEMA = {
     "properties": {
         "title": {"type": "string", "description": "Reminder task title"},
         "message": {"type": "string", "description": "SMS reminder body"},
-        "run_at": {"type": "string", "description": "ISO timestamp (e.g. 2026-09-15T09:00)"}
+        "run_at": {
+            "type": "string",
+            "description": "Absolute Beijing time, format YYYY-MM-DDTHH:MM. Use for one-shot reminders.",
+        },
+        "frequency": {
+            "type": "string",
+            "enum": ["once", "weekly", "monthly", "yearly", "interval"],
+            "description": "Recurrence. Default 'once'. Use 'monthly' with monthly_day for repeating bills.",
+        },
+        "delay_minutes": {"type": "integer", "description": "Fire N minutes from now (alternative to run_at)"},
+        "delay_hours": {"type": "integer", "description": "Fire N hours from now (alternative to run_at)"},
+        "delay_days": {"type": "integer", "description": "Fire N days from now (alternative to run_at)"},
+        "weekday": {
+            "type": "integer",
+            "description": "0=Sunday .. 6=Saturday. Required when frequency='weekly'.",
+        },
+        "weekly_time": {"type": "string", "description": "HH:mm for weekly reminders, default 09:00"},
+        "monthly_day": {
+            "type": "integer",
+            "description": "Day of month 1-31 for frequency='monthly' (e.g. 14 = every month on the 14th)",
+        },
+        "auto_delete": {
+            "type": "boolean",
+            "description": "Delete task after it completes. Default true; only meaningful for frequency='once'.",
+        },
     },
-    "required": ["title", "message", "run_at"]
+    "required": ["title", "message"],
+}
+
+SMS_LIST_REMINDERS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "description": "Max tasks to return, default 50"}
+    },
+}
+
+SMS_TASK_ID_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "task_id": {"type": "string", "description": "Reminder task id (uuid) returned by sms_create_reminder"}
+    },
+    "required": ["task_id"],
+}
+
+SMS_TOGGLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "task_id": {"type": "string", "description": "Reminder task id"},
+        "enabled": {"type": "boolean", "description": "true to enable, false to pause"},
+    },
+    "required": ["task_id"],
+}
+
+SMS_LOGS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "description": "Max log entries, default 50"}
+    },
 }
 
 SMS_QUOTA_SCHEMA = {
@@ -327,6 +430,10 @@ ALL_TOOLS = (
     # SMS Tools
     ("sms_send", SMS_SEND_SCHEMA, handle_sms_send, "📱"),
     ("sms_create_reminder", SMS_REMINDER_SCHEMA, handle_sms_create_reminder, "⏰"),
+    ("sms_list_reminders", SMS_LIST_REMINDERS_SCHEMA, handle_sms_list_reminders, "📋"),
+    ("sms_delete_reminder", SMS_TASK_ID_SCHEMA, handle_sms_delete_reminder, "🗑️"),
+    ("sms_toggle_reminder", SMS_TOGGLE_SCHEMA, handle_sms_toggle_reminder, "🔀"),
+    ("sms_logs", SMS_LOGS_SCHEMA, handle_sms_logs, "🧾"),
     ("sms_quota", SMS_QUOTA_SCHEMA, handle_sms_quota, "📊"),
 
     # WHS Tools
