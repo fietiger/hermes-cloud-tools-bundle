@@ -99,37 +99,75 @@ def handle_kv_delete(key: str, **kwargs) -> str:
     return json.dumps(res, ensure_ascii=False)
 
 KV_GET_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "key": {"type": "string", "description": "Key name in Cloudflare KV"}
+    'name': 'kv_get',
+    'description': 'Read a value from Cloudflare KV by key. Use this for secrets and small config the user keeps in kvbox (e.g. openrouter/api_key, xiaoniu/ssh_password_b64, ai/junshi). Prefer it over terminal+curl: it needs no approval prompt and the key is URL-encoded for you. Returns {"found": false} for a missing key, never a false success.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'key': {
+                'type': 'string',
+                'description': 'Key name in Cloudflare KV',
+            },
+        },
+        'required': ['key'],
     },
-    "required": ["key"]
 }
 
 KV_PUT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "key": {"type": "string", "description": "Key name in Cloudflare KV"},
-        "value": {"description": "Value to store (string, number, dict, list, etc.)"},
-        "ttl": {"type": "integer", "description": "Optional time-to-live in seconds"}
+    'name': 'kv_put',
+    'description': 'Store a value in Cloudflare KV, optionally with a TTL in seconds. Use to persist a credential or config fragment the user wants to retrieve later with kv_get. Values may be strings, numbers, or JSON objects.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'key': {
+                'type': 'string',
+                'description': 'Key name in Cloudflare KV',
+            },
+            'value': {
+                'description': 'Value to store (string, number, dict, list, etc.)',
+            },
+            'ttl': {
+                'type': 'integer',
+                'description': 'Optional time-to-live in seconds',
+            },
+        },
+        'required': ['key', 'value'],
     },
-    "required": ["key", "value"]
 }
 
 KV_LIST_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "prefix": {"type": "string", "description": "Key prefix filter", "default": ""},
-        "limit": {"type": "integer", "description": "Maximum number of keys", "default": 100}
-    }
+    'name': 'kv_list',
+    'description': 'List Cloudflare KV keys matching a prefix. Use to discover what is stored before reading a specific key — kvbox is not enumerable any other way. Returns key names plus a cursor; page with a larger limit.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'prefix': {
+                'type': 'string',
+                'description': 'Key prefix filter',
+                'default': '',
+            },
+            'limit': {
+                'type': 'integer',
+                'description': 'Maximum number of keys',
+                'default': 100,
+            },
+        },
+    },
 }
 
 KV_DELETE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "key": {"type": "string", "description": "Key to delete"}
+    'name': 'kv_delete',
+    'description': 'Delete a key from Cloudflare KV. Destructive and irreversible — only call it when the user asked for that key to be removed.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'key': {
+                'type': 'string',
+                'description': 'Key to delete',
+            },
+        },
+        'required': ['key'],
     },
-    "required": ["key"]
 }
 
 
@@ -194,38 +232,83 @@ def handle_diary_delete(diary_id: int, **kwargs) -> Dict[str, Any]:
     return client.delete(entry_id=diary_id)
 
 DIARY_WRITE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "content": {"type": "string", "description": "Diary body text content"},
-        "title": {"type": "string", "description": "Optional title of the diary entry"},
-        "mood": {"type": "string", "description": "Mood rating (e.g. happy, neutral, busy, sad)", "default": "happy"},
-        "date": {"type": "string", "description": "Date in YYYY-MM-DD (defaults to today)"}
+    'name': 'diary_write',
+    'description': 'Append a diary entry. Use when the user records something personal worth keeping (reflection, work log, mood). Content is required; title, mood and date default sensibly.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'content': {
+                'type': 'string',
+                'description': 'Diary body text content',
+            },
+            'title': {
+                'type': 'string',
+                'description': 'Optional title of the diary entry',
+            },
+            'mood': {
+                'type': 'string',
+                'description': 'Mood rating (e.g. happy, neutral, busy, sad)',
+                'default': 'happy',
+            },
+            'date': {
+                'type': 'string',
+                'description': 'Date in YYYY-MM-DD (defaults to today)',
+            },
+        },
+        'required': ['content'],
     },
-    "required": ["content"]
 }
 
 DIARY_LIST_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "limit": {"type": "integer", "description": "Number of recent diaries to list", "default": 10}
-    }
+    'name': 'diary_list',
+    'description': 'List the most recent diary entries, newest first. Use to recall or summarize what the user has logged.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'limit': {
+                'type': 'integer',
+                'description': 'Number of recent diaries to list',
+                'default': 10,
+            },
+        },
+    },
 }
 
 DIARY_SEARCH_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "keyword": {"type": "string", "description": "Search keyword in diary content/title"},
-        "from_date": {"type": "string", "description": "Start date in YYYY-MM-DD"},
-        "to_date": {"type": "string", "description": "End date in YYYY-MM-DD"}
-    }
+    'name': 'diary_search',
+    'description': 'Search diary entries by keyword and/or date range. The keyword is matched client-side against titles and content; the server filters by date only. Pass a keyword alone for a full-text sweep, or from_date/to_date for a period.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'keyword': {
+                'type': 'string',
+                'description': 'Search keyword in diary content/title',
+            },
+            'from_date': {
+                'type': 'string',
+                'description': 'Start date in YYYY-MM-DD',
+            },
+            'to_date': {
+                'type': 'string',
+                'description': 'End date in YYYY-MM-DD',
+            },
+        },
+    },
 }
 
 DIARY_DELETE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "diary_id": {"type": "integer", "description": "Diary record ID to delete"}
+    'name': 'diary_delete',
+    'description': 'Delete a diary entry by its numeric id. Destructive — only call it when the user asked for that entry to be removed. Use diary_list to find the id.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'diary_id': {
+                'type': 'integer',
+                'description': 'Diary record ID to delete',
+            },
+        },
+        'required': ['diary_id'],
     },
-    "required": ["diary_id"]
 }
 
 
@@ -319,82 +402,149 @@ def handle_sms_quota(**kwargs) -> Dict[str, Any]:
     return client.get_quota()
 
 SMS_SEND_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "message": {"type": "string", "description": "SMS content to deliver"},
-        "phone": {"type": "string", "description": "Optional recipient phone number"}
+    'name': 'sms_send',
+    'description': "Send an immediate SMS to the user. For SCHEDULED or recurring alerts use sms_create_reminder instead — that is the user's standard channel for every reminder, bill, appointment and todo.",
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'message': {
+                'type': 'string',
+                'description': 'SMS content to deliver',
+            },
+            'phone': {
+                'type': 'string',
+                'description': 'Optional recipient phone number',
+            },
+        },
+        'required': ['message'],
     },
-    "required": ["message"]
 }
 
 SMS_REMINDER_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string", "description": "Reminder task title"},
-        "message": {"type": "string", "description": "SMS reminder body"},
-        "run_at": {
-            "type": "string",
-            "description": "Absolute Beijing time, format YYYY-MM-DDTHH:MM. Use for one-shot reminders.",
+    'name': 'sms_create_reminder',
+    'description': "Schedule an SMS reminder. This is the correct tool for ANY timed or recurring notification (bills, medication, appointments, todos) — the user wants all of them through this reminder hub, not local cron. One-shot: pass run_at as Beijing time YYYY-MM-DDTHH:MM, or a delay_* value to fire N minutes/hours/days from now. Recurring: frequency 'weekly' needs weekday, 'monthly' needs monthly_day (e.g. a bill due on the 8th -> frequency='monthly', monthly_day=7, run_at='...T09:00').",
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'title': {
+                'type': 'string',
+                'description': 'Reminder task title',
+            },
+            'message': {
+                'type': 'string',
+                'description': 'SMS reminder body',
+            },
+            'run_at': {
+                'type': 'string',
+                'description': 'Absolute Beijing time, format YYYY-MM-DDTHH:MM. Use for one-shot reminders.',
+            },
+            'frequency': {
+                'type': 'string',
+                'enum': ['once', 'weekly', 'monthly', 'yearly', 'interval'],
+                'description': "Recurrence. Default 'once'. Use 'monthly' with monthly_day for repeating bills.",
+            },
+            'delay_minutes': {
+                'type': 'integer',
+                'description': 'Fire N minutes from now (alternative to run_at)',
+            },
+            'delay_hours': {
+                'type': 'integer',
+                'description': 'Fire N hours from now (alternative to run_at)',
+            },
+            'delay_days': {
+                'type': 'integer',
+                'description': 'Fire N days from now (alternative to run_at)',
+            },
+            'weekday': {
+                'type': 'integer',
+                'description': "0=Sunday .. 6=Saturday. Required when frequency='weekly'.",
+            },
+            'weekly_time': {
+                'type': 'string',
+                'description': 'HH:mm for weekly reminders, default 09:00',
+            },
+            'monthly_day': {
+                'type': 'integer',
+                'description': "Day of month 1-31 for frequency='monthly' (e.g. 14 = every month on the 14th)",
+            },
+            'auto_delete': {
+                'type': 'boolean',
+                'description': "Delete task after it completes. Default true; only meaningful for frequency='once'.",
+            },
         },
-        "frequency": {
-            "type": "string",
-            "enum": ["once", "weekly", "monthly", "yearly", "interval"],
-            "description": "Recurrence. Default 'once'. Use 'monthly' with monthly_day for repeating bills.",
-        },
-        "delay_minutes": {"type": "integer", "description": "Fire N minutes from now (alternative to run_at)"},
-        "delay_hours": {"type": "integer", "description": "Fire N hours from now (alternative to run_at)"},
-        "delay_days": {"type": "integer", "description": "Fire N days from now (alternative to run_at)"},
-        "weekday": {
-            "type": "integer",
-            "description": "0=Sunday .. 6=Saturday. Required when frequency='weekly'.",
-        },
-        "weekly_time": {"type": "string", "description": "HH:mm for weekly reminders, default 09:00"},
-        "monthly_day": {
-            "type": "integer",
-            "description": "Day of month 1-31 for frequency='monthly' (e.g. 14 = every month on the 14th)",
-        },
-        "auto_delete": {
-            "type": "boolean",
-            "description": "Delete task after it completes. Default true; only meaningful for frequency='once'.",
-        },
+        'required': ['title', 'message'],
     },
-    "required": ["title", "message"],
 }
 
 SMS_LIST_REMINDERS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "limit": {"type": "integer", "description": "Max tasks to return, default 50"}
+    'name': 'sms_list_reminders',
+    'description': 'List scheduled SMS reminder tasks with their ids, recurrence and next fire time. Use before toggling or deleting a task, since both need the task_id.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'limit': {
+                'type': 'integer',
+                'description': 'Max tasks to return, default 50',
+            },
+        },
     },
 }
 
 SMS_TASK_ID_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "task_id": {"type": "string", "description": "Reminder task id (uuid) returned by sms_create_reminder"}
+    'name': 'sms_delete_reminder',
+    'description': 'Delete a reminder task by id. Obtain the id from sms_list_reminders. Destructive — only call it when the user asked for that reminder to go.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'task_id': {
+                'type': 'string',
+                'description': 'Reminder task id (uuid) returned by sms_create_reminder',
+            },
+        },
+        'required': ['task_id'],
     },
-    "required": ["task_id"],
 }
 
 SMS_TOGGLE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "task_id": {"type": "string", "description": "Reminder task id"},
-        "enabled": {"type": "boolean", "description": "true to enable, false to pause"},
+    'name': 'sms_toggle_reminder',
+    'description': 'Pause or resume a reminder task without deleting it (enabled=false pauses, true resumes). Use this over delete when the user wants a reminder to stop for now but keep it.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'task_id': {
+                'type': 'string',
+                'description': 'Reminder task id',
+            },
+            'enabled': {
+                'type': 'boolean',
+                'description': 'true to enable, false to pause',
+            },
+        },
+        'required': ['task_id'],
     },
-    "required": ["task_id"],
 }
 
 SMS_LOGS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "limit": {"type": "integer", "description": "Max log entries, default 50"}
+    'name': 'sms_logs',
+    'description': 'Fetch recent SMS delivery history — what was sent, when, and whether it went out. Use to check whether a reminder actually fired, or to debug a message the user says never arrived.',
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'limit': {
+                'type': 'integer',
+                'description': 'Max log entries, default 50',
+            },
+        },
     },
 }
 
 SMS_QUOTA_SCHEMA = {
-    "type": "object",
-    "properties": {}
+    'name': 'sms_quota',
+    'description': 'Check the remaining SMS quota and when the window resets. Use before scheduling a burst of reminders, or when a send fails and quota is the suspected cause.',
+    'parameters': {
+        'type': 'object',
+        'properties': {},
+    },
 }
 
 
