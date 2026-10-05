@@ -161,22 +161,54 @@ def _arg_error(tool: str, param: str, spec: Any, received: Any) -> str:
 
 
 def _with_schema_coercion(name: str, schema: dict, handler):
-    """Wrap *handler* so keyword arguments are normalized to the schema's types."""
+    """Adapt a handler to the plugin contract and normalize its arguments.
+
+    Hermes dispatches plugin tools as ``handler(args_dict, **context)`` — see
+    ``tools/registry.py`` ``dispatch()``: the whole argument dict arrives as the
+    FIRST POSITIONAL argument, and only context kwargs (``task_id``,
+    ``session_id``, ...) follow. Built-ins mirror this with handlers shaped
+    ``_handle_x(args, **kw)``.
+
+    A handler written as ``handle_kv_get(key: str)`` therefore receives the whole
+    dict as ``key``. That produced ``urllib.parse.quote({...})`` ->
+    ``TypeError: quote_from_bytes() expected bytes`` in real sessions while every
+    direct-call test passed, because the dict only shows up on this path.
+
+    So: accept the positional dict, repair each value against the schema, then
+    forward as keywords. Positional-only calls (``handler(key="x")``) keep
+    working unchanged.
+    """
     properties = ((schema or {}).get("parameters") or {}).get("properties") or {}
+
+    def _coerce_kwargs(raw: dict) -> Any:
+        for param, spec in properties.items():
+            if param not in raw:
+                continue
+            received = raw[param]
+            value = _normalize_arg(received, spec)
+            if not _arg_is_usable(value, spec):
+                return None, _arg_error(name, param, spec, received)
+            raw[param] = value
+        return raw, None
 
     @functools.wraps(handler)
     def wrapper(*args, **kwargs):
-        if args:  # positional call: leave the calling convention alone
-            return handler(*args, **kwargs)
-        for param, spec in properties.items():
-            if param not in kwargs:
-                continue
-            received = kwargs[param]
-            value = _normalize_arg(received, spec)
-            if not _arg_is_usable(value, spec):
-                return _arg_error(name, param, spec, received)
-            kwargs[param] = value
-        return handler(**kwargs)
+        if args:
+            # Contract path: args[0] is the argument dict.
+            incoming = args[0]
+            if not isinstance(incoming, dict):
+                incoming = {}
+            merged = dict(incoming)
+            merged.update(kwargs)
+            repaired, err = _coerce_kwargs(merged)
+            if err is not None:
+                return err
+            return handler(**repaired)
+        # Direct keyword call: normalize the same way.
+        repaired, err = _coerce_kwargs(dict(kwargs))
+        if err is not None:
+            return err
+        return handler(**repaired)
 
     return wrapper
 
