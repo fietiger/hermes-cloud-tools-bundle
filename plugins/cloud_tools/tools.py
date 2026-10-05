@@ -31,6 +31,156 @@ def _safe(fn):
         return json.dumps(res, ensure_ascii=False, default=str)
     return wrapper
 
+
+# ==============================================================================
+# 0b. Schema-driven argument normalization
+# ==============================================================================
+# A model reliably emits three malformations for a scalar parameter, and each
+# one used to reach the handler and break it from the inside:
+#   kv_get(key={"key": "ai/junshi"})     -> TypeError: quote_from_bytes() expected bytes
+#   sms_list_reminders(limit="50")       -> slice indices must be integers
+#   sms_toggle_reminder(enabled="true")  -> a non-empty string is always truthy
+# The declared type lives in the tool's OWN schema, so deriving the repair from
+# that schema keeps it correct as schemas change and needs no per-handler code.
+#
+# Every repair here is best-effort and never raises: a value whose category still
+# cannot satisfy the schema produces a named error instead of an opaque TypeError
+# from deep inside a handler.
+
+_JSON_SCALARS = (str, int, float, bool)
+
+
+def _schema_type(spec: Any) -> Optional[str]:
+    """The declared JSON Schema type, ignoring a null union member."""
+    declared = (spec or {}).get("type")
+    if isinstance(declared, list):
+        declared = next((t for t in declared if t != "null"), None)
+    return declared if isinstance(declared, str) else None
+
+
+def _is_scalar(value: Any) -> Any:
+    return isinstance(value, _JSON_SCALARS)
+
+
+def _unwrap_scalar(value: Any) -> Any:
+    """Recover a scalar from a single-entry wrapper dict: {"key": "x"} -> "x".
+
+    Only unwraps when the wrapped value is itself a scalar, so an intentionally
+    structured argument is never flattened.
+    """
+    if not isinstance(value, dict) or len(value) != 1:
+        return value
+    (inner,) = value.values()
+    return inner if _is_scalar(inner) else value
+
+
+def _to_integer(value: Any) -> Any:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return value
+    if isinstance(value, int):
+        return value
+    # A float that is exactly integral is a model emitting "50.0" for limit:50;
+    # a genuinely fractional value cannot satisfy an integer parameter.
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    return int(number) if number.is_integer() else value
+
+
+def _to_boolean(value: Any) -> Any:
+    """Only the unambiguous spellings; anything else is left for the handler."""
+    if isinstance(value, str):
+        folded = value.strip().lower()
+        if folded in ("true", "yes", "1"):
+            return True
+        if folded in ("false", "no", "0"):
+            return False
+    return value
+
+
+def _to_object(value: Any) -> Any:
+    if isinstance(value, str) and value.strip().startswith("{"):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        return parsed if isinstance(parsed, dict) else value
+    return value
+
+
+def _normalize_arg(value: Any, spec: Any) -> Any:
+    """Best-effort repair of one argument toward its declared type."""
+    expected = _schema_type(spec)
+    if expected is None:
+        return value
+    if expected in ("string", "integer", "number", "boolean"):
+        value = _unwrap_scalar(value)
+    if expected == "string":
+        return value if isinstance(value, str) else str(value) if _is_scalar(value) else value
+    if expected in ("integer", "number"):
+        return _to_integer(value)
+    if expected == "boolean":
+        return _to_boolean(value)
+    if expected == "object":
+        return _to_object(value)
+    return value
+
+
+def _arg_is_usable(value: Any, spec: Any) -> bool:
+    """False when the value's category still cannot satisfy the declared type."""
+    expected = _schema_type(spec)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        # A float reaching an integer parameter (a slice, an id) breaks the
+        # handler even though its category looks close enough.
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "object":
+        return isinstance(value, dict)
+    return True
+
+
+def _arg_error(tool: str, param: str, spec: Any, received: Any) -> str:
+    return json.dumps({
+        "error": "ArgumentError",
+        "tool": tool,
+        "argument": param,
+        "expected_type": _schema_type(spec),
+        "received_type": type(received).__name__,
+        "message": (
+            f"{tool}: argument '{param}' must be {_schema_type(spec)}, got "
+            f"{type(received).__name__}. Pass the value itself, not a dict that "
+            f"describes it (e.g. key=\"ai/junshi\", not key={{\"key\": \"ai/junshi\"}})."
+        ),
+    }, ensure_ascii=False)
+
+
+def _with_schema_coercion(name: str, schema: dict, handler):
+    """Wrap *handler* so keyword arguments are normalized to the schema's types."""
+    properties = ((schema or {}).get("parameters") or {}).get("properties") or {}
+
+    @functools.wraps(handler)
+    def wrapper(*args, **kwargs):
+        if args:  # positional call: leave the calling convention alone
+            return handler(*args, **kwargs)
+        for param, spec in properties.items():
+            if param not in kwargs:
+                continue
+            received = kwargs[param]
+            value = _normalize_arg(received, spec)
+            if not _arg_is_usable(value, spec):
+                return _arg_error(name, param, spec, received)
+            kwargs[param] = value
+        return handler(**kwargs)
+
+    return wrapper
+
+
 # ==============================================================================
 # 1. Cloudflare KV Tools (kvbox)
 # ==============================================================================
@@ -573,6 +723,13 @@ ALL_TOOLS = (
     ("sms_toggle_reminder", SMS_TOGGLE_SCHEMA, handle_sms_toggle_reminder, "🔀"),
     ("sms_logs", SMS_LOGS_SCHEMA, handle_sms_logs, "🧾"),
     ("sms_quota", SMS_QUOTA_SCHEMA, handle_sms_quota, "📊"),
+)
+
+# Each tool is wrapped with the normalization its own schema declares, so the
+# repair follows the schema instead of duplicating type knowledge per handler.
+ALL_TOOLS = tuple(
+    (name, schema, _with_schema_coercion(name, schema, handler), emoji)
+    for name, schema, handler, emoji in ALL_TOOLS
 )
 
 def register_tools(ctx) -> None:
