@@ -1,9 +1,37 @@
+import base64
+import functools
 import json
 import os
+import urllib.error
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
+
+# ==============================================================================
+# 0. Shared helper: uniform tool response envelope
+# ==============================================================================
+def _safe(fn):
+    """Wrap a handler so it always returns a serialized JSON string.
+
+    - a returned str passes through unchanged
+    - any other return value is json.dumps(..., ensure_ascii=False, default=str)
+    - an escaping exception becomes {"error": <type>, "message": <str>}
+      instead of a traceback reaching the model.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            res = fn(*args, **kwargs)
+        except Exception as e:
+            return json.dumps(
+                {"error": type(e).__name__, "message": str(e)},
+                ensure_ascii=False, default=str,
+            )
+        if isinstance(res, str):
+            return res
+        return json.dumps(res, ensure_ascii=False, default=str)
+    return wrapper
 
 # ==============================================================================
 # 1. Cloudflare KV Tools (kvbox)
@@ -12,11 +40,15 @@ KV_DEFAULT_URL = "https://kv.benext.uk"
 
 def _get_kv_token() -> str:
     token = os.getenv("KVBOX_TOKEN")
-    if not token:
-        for p in ["/opt/data/.kvbox_token", "/root/.hermes/.kvbox_token"]:
-            if os.path.exists(p):
-                return open(p).read().strip()
-    return token or "CpxaDyRfzW2fKOQqPC8kDRufUCT5MpK6np9rIHgk7zg"
+    if token:
+        return token
+    for p in ["/opt/data/.kvbox_token", "/root/.hermes/.kvbox_token"]:
+        if os.path.exists(p):
+            return open(p).read().strip()
+    raise RuntimeError(
+        "KV token not found: set the KVBOX_TOKEN environment variable, or provide "
+        "a token file at /opt/data/.kvbox_token or /root/.hermes/.kvbox_token"
+    )
 
 def _kv_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
     url = f"{os.getenv('KVBOX_URL', KV_DEFAULT_URL).rstrip('/')}{path}"
@@ -29,33 +61,43 @@ def _kv_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        # A real HTTP status response; caller can branch on "_status" (e.g. 404).
+        return {"_status": e.code, "error": str(e)}
     except Exception as e:
-        return {"error": str(e)}
+        # Transport / decode failure (network down, DNS, bad JSON, missing token).
+        return {"_transport_error": f"{type(e).__name__}: {e}"}
 
+@_safe
 def handle_kv_list(prefix: str = "", limit: int = 100, **kwargs) -> str:
     """List keys from Cloudflare KV with prefix."""
     qs = urllib.parse.urlencode({"prefix": prefix, "limit": limit})
     res = _kv_req("GET", f"/list?{qs}")
     return json.dumps(res, ensure_ascii=False)
 
+@_safe
 def handle_kv_get(key: str, **kwargs) -> str:
     """Get value by key from Cloudflare KV."""
-    res = _kv_req("GET", f"/keys/{key}")
-    if res.get("error") == "not found":
+    res = _kv_req("GET", f"/keys/{urllib.parse.quote(key, safe='')}")
+    if res.get("_status") == 404:
         return json.dumps({"found": False, "key": key, "value": None}, ensure_ascii=False)
+    if res.get("_status") or res.get("_transport_error"):
+        return json.dumps({"found": False, "key": key, "error": res}, ensure_ascii=False)
     return json.dumps({"found": True, "key": key, "value": res.get("value", res)}, ensure_ascii=False)
 
+@_safe
 def handle_kv_put(key: str, value: Any, ttl: Optional[int] = None, **kwargs) -> str:
     """Put key-value pair into Cloudflare KV."""
     body: Dict[str, Any] = {"value": value}
     if ttl:
         body["ttl"] = int(ttl)
-    res = _kv_req("PUT", f"/keys/{key}", body)
+    res = _kv_req("PUT", f"/keys/{urllib.parse.quote(key, safe='')}", body)
     return json.dumps(res, ensure_ascii=False)
 
+@_safe
 def handle_kv_delete(key: str, **kwargs) -> str:
     """Delete a key from Cloudflare KV."""
-    res = _kv_req("DELETE", f"/keys/{key}")
+    res = _kv_req("DELETE", f"/keys/{urllib.parse.quote(key, safe='')}")
     return json.dumps(res, ensure_ascii=False)
 
 KV_GET_SCHEMA = {
@@ -113,21 +155,41 @@ def _get_diary_client():
                 return mod.DiaryClient()
     raise RuntimeError("无法初始化 DiaryClient，缺少凭据文件")
 
+@_safe
 def handle_diary_write(content: str, title: str = "", mood: str = "happy", date: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Write a new diary entry."""
     client = _get_diary_client()
     return client.write(content=content, title=title, mood=mood, date=date)
 
+@_safe
 def handle_diary_list(limit: int = 10, **kwargs) -> Any:
     """List recent diary entries."""
     client = _get_diary_client()
     return client.list_diaries(limit=limit)
 
+@_safe
 def handle_diary_search(keyword: str = "", from_date: str = "", to_date: str = "", **kwargs) -> Any:
-    """Search diaries by keyword and/or date range."""
-    client = _get_diary_client()
-    return client.search(keyword=keyword, from_date=from_date, to_date=to_date)
+    """Search diaries by keyword (client-side) and/or date range.
 
+    DiaryClient.search only accepts from_date/to_date — the server cannot filter
+    by keyword. The schema advertises `keyword` to the model, so instead of
+    dropping the capability (which would require editing the schema and the
+    tool description) we fetch the date-range results and filter them here on a
+    case-insensitive substring match against each entry's title/content. This
+    keeps schema, handler signature and client all in agreement.
+    """
+    client = _get_diary_client()
+    entries = client.search(from_date=from_date or None, to_date=to_date or None)
+    if keyword and isinstance(entries, list):
+        kw = keyword.lower()
+        entries = [
+            e for e in entries
+            if kw in str(e.get("title", "")).lower()
+            or kw in str(e.get("content", "")).lower()
+        ]
+    return entries
+
+@_safe
 def handle_diary_delete(diary_id: int, **kwargs) -> Dict[str, Any]:
     """Delete a diary entry by ID."""
     client = _get_diary_client()
@@ -188,11 +250,13 @@ def _get_sms_client():
                 return mod.SMSClient()
     raise RuntimeError("无法初始化 SMSClient")
 
+@_safe
 def handle_sms_send(message: str, phone: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Send an instant SMS message."""
     client = _get_sms_client()
     return client.send_sms(message=message, phone=phone)
 
+@_safe
 def handle_sms_create_reminder(
     title: str,
     message: str,
@@ -223,6 +287,7 @@ def handle_sms_create_reminder(
         auto_delete=auto_delete,
     )
 
+@_safe
 def handle_sms_list_reminders(limit: int = 50, **kwargs) -> Dict[str, Any]:
     """List scheduled SMS reminder tasks."""
     client = _get_sms_client()
@@ -231,21 +296,25 @@ def handle_sms_list_reminders(limit: int = 50, **kwargs) -> Dict[str, Any]:
         tasks = tasks[: int(limit)]
     return {"count": len(tasks) if isinstance(tasks, list) else 0, "tasks": tasks}
 
+@_safe
 def handle_sms_delete_reminder(task_id: str, **kwargs) -> Dict[str, Any]:
     """Delete a scheduled SMS reminder task by id."""
     client = _get_sms_client()
     return client.delete_task(task_id)
 
+@_safe
 def handle_sms_toggle_reminder(task_id: str, enabled: bool = True, **kwargs) -> Dict[str, Any]:
     """Enable or disable a scheduled SMS reminder task."""
     client = _get_sms_client()
     return client.toggle_task(task_id, enabled)
 
+@_safe
 def handle_sms_logs(limit: int = 50, **kwargs) -> Dict[str, Any]:
     """Fetch recent SMS send history / delivery logs."""
     client = _get_sms_client()
     return {"logs": client.get_logs(limit=int(limit))}
 
+@_safe
 def handle_sms_quota(**kwargs) -> Dict[str, Any]:
     """Check remaining SMS quota."""
     client = _get_sms_client()
@@ -334,21 +403,36 @@ SMS_QUOTA_SCHEMA = {
 # ==============================================================================
 # 4. Work Hour System Tools (WHS)
 # ==============================================================================
-WHS_DEFAULT_URL = "https://work-hour-system.pages.dev"
+WHS_DEFAULT_URL = "https://work-hour-system.fietiger.workers.dev"
+
+def _whs_auth_header() -> str:
+    user = os.getenv("WHS_USERNAME")
+    pwd = os.getenv("WHS_PASSWORD")
+    if not user or not pwd:
+        raise RuntimeError(
+            "WHS credentials missing: set both the WHS_USERNAME and WHS_PASSWORD "
+            "environment variables"
+        )
+    token = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+    return "Basic " + token
 
 def _whs_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
     url = f"{os.getenv('WHS_URL', WHS_DEFAULT_URL).rstrip('/')}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", _whs_auth_header())
     req.add_header("User-Agent", "hermes-agent-tool/1.0")
     if data:
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"_status": e.code, "error": str(e)}
     except Exception as e:
-        return {"error": str(e)}
+        return {"_transport_error": f"{type(e).__name__}: {e}"}
 
+@_safe
 def handle_whs_add_report(username: str, project: str, content: str, start_time: str = "08:30", end_time: str = "17:30", date: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Submit a daily work report."""
     tz = timezone(timedelta(hours=8))
@@ -363,11 +447,13 @@ def handle_whs_add_report(username: str, project: str, content: str, start_time:
     }
     return _whs_req("POST", "/api/reports", body)
 
+@_safe
 def handle_whs_list_reports(username: Optional[str] = None, limit: int = 20, **kwargs) -> Dict[str, Any]:
     """List work reports."""
     qs = urllib.parse.urlencode({"username": username or "", "limit": limit})
     return _whs_req("GET", f"/api/reports?{qs}")
 
+@_safe
 def handle_whs_add_plan(username: str, project: str, start_date: str, end_date: str, **kwargs) -> Dict[str, Any]:
     """Add a project Gantt chart plan."""
     body = {
