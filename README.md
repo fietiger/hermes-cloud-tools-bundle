@@ -1,6 +1,6 @@
 # Hermes Cloud Tools Bundle (合集工具插件)
 
-Hermes Agent 原生通用扩展插件包，集成了 Cloudflare KV 存储、日记系统、乌龟卡短信提醒以及工时日报系统四大核心服务。
+Hermes Agent 原生通用扩展插件包，集成了 Cloudflare KV 存储、日记系统以及乌龟卡短信提醒三大核心服务。
 
 ---
 
@@ -22,11 +22,6 @@ Hermes Agent 原生通用扩展插件包，集成了 Cloudflare KV 存储、日�
 - `sms_send(message, phone)`: 即时发送短信
 - `sms_create_reminder(title, message, run_at)`: 创建定时短信提醒（支持单次/周期）
 - `sms_quota()`: 查询当月短信额度与使用情况
-
-### 4. 工时日报系统 (WHS)
-- `whs_add_report(username, project, content, start_time, end_time, date)`: 提交工时日报
-- `whs_list_reports(username, limit)`: 查询员工工时日报
-- `whs_add_plan(username, project, start_date, end_date)`: 录入项目甘特图计划
 
 ---
 

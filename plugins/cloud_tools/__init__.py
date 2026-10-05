@@ -1,4 +1,4 @@
-"""Hermes Cloud Tools Bundle — integrates KV, Diary, SMS, and Work Hour System."""
+"""Hermes Cloud Tools Bundle — integrates KV, Diary, and SMS."""
 
 import logging
 from .tools import ALL_TOOLS

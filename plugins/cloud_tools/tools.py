@@ -4,8 +4,7 @@ import os
 import urllib.error
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 # ==============================================================================
 # 0. Shared helper: uniform tool response envelope
@@ -399,136 +398,6 @@ SMS_QUOTA_SCHEMA = {
 }
 
 
-# ==============================================================================
-# 4. Work Hour System Tools (WHS)
-# ==============================================================================
-WHS_DEFAULT_URL = "https://work-hour-system.fietiger.workers.dev"
-
-def _whs_creds() -> tuple:
-    """WHS_USERNAME / WHS_PASSWORD, or a named error naming both."""
-    user = os.getenv("WHS_USERNAME")
-    pwd = os.getenv("WHS_PASSWORD")
-    if not user or not pwd:
-        raise RuntimeError(
-            "WHS credentials missing: set both the WHS_USERNAME and WHS_PASSWORD "
-            "environment variables"
-        )
-    return user, pwd
-
-def _whs_token() -> str:
-    """Log in once per process and cache the Bearer token.
-
-    The server issues a token from POST /api/login and expects it back as
-    ``Authorization: Bearer <token>`` on every later call (see
-    /opt/data/clients/whs_client.py). It does NOT accept HTTP Basic.
-    """
-    global _WHS_TOKEN
-    if _WHS_TOKEN:
-        return _WHS_TOKEN
-    user, pwd = _whs_creds()
-    url = f"{os.getenv('WHS_URL', WHS_DEFAULT_URL).rstrip('/')}/api/login"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps({"username": user, "password": pwd}).encode(),
-        method="POST",
-    )
-    req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "hermes-agent-tool/1.0")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            body = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"WHS login failed: HTTP {e.code} (check WHS_USERNAME/WHS_PASSWORD)")
-    except Exception as e:
-        raise RuntimeError(f"WHS login failed: {type(e).__name__}: {e}")
-    token = body.get("token") if isinstance(body, dict) else None
-    if not token:
-        raise RuntimeError("WHS login returned no token — server auth scheme may have changed")
-    _WHS_TOKEN = token
-    return token
-
-_WHS_TOKEN: Optional[str] = None
-
-def _whs_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
-    url = f"{os.getenv('WHS_URL', WHS_DEFAULT_URL).rstrip('/')}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {_whs_token()}")
-    req.add_header("User-Agent", "hermes-agent-tool/1.0")
-    if data:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return {"_status": e.code, "error": str(e)}
-    except Exception as e:
-        return {"_transport_error": f"{type(e).__name__}: {e}"}
-
-@_safe
-def handle_whs_add_report(username: str, project: str, content: str, start_time: str = "08:30", end_time: str = "17:30", date: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-    """Submit a daily work report."""
-    tz = timezone(timedelta(hours=8))
-    date_str = date or datetime.now(tz).strftime("%Y-%m-%d")
-    body = {
-        "username": username,
-        "date": date_str,
-        "project": project,
-        "start_time": start_time,
-        "end_time": end_time,
-        "content": content
-    }
-    return _whs_req("POST", "/api/reports", body)
-
-@_safe
-def handle_whs_list_reports(username: Optional[str] = None, limit: int = 20, **kwargs) -> Dict[str, Any]:
-    """List work reports."""
-    qs = urllib.parse.urlencode({"username": username or "", "limit": limit})
-    return _whs_req("GET", f"/api/reports?{qs}")
-
-@_safe
-def handle_whs_add_plan(username: str, project: str, start_date: str, end_date: str, **kwargs) -> Dict[str, Any]:
-    """Add a project Gantt chart plan."""
-    body = {
-        "username": username,
-        "project": project,
-        "start_date": start_date,
-        "end_date": end_date
-    }
-    return _whs_req("POST", "/api/plans", body)
-
-WHS_ADD_REPORT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "username": {"type": "string", "description": "Worker username (e.g. nick)"},
-        "project": {"type": "string", "description": "Project name"},
-        "content": {"type": "string", "description": "Detailed task report content"},
-        "start_time": {"type": "string", "description": "Start time (HH:MM)", "default": "08:30"},
-        "end_time": {"type": "string", "description": "End time (HH:MM)", "default": "17:30"},
-        "date": {"type": "string", "description": "Date (YYYY-MM-DD, defaults to today)"}
-    },
-    "required": ["username", "project", "content"]
-}
-
-WHS_LIST_REPORTS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "username": {"type": "string", "description": "Optional username filter"},
-        "limit": {"type": "integer", "description": "Maximum items", "default": 20}
-    }
-}
-
-WHS_ADD_PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "username": {"type": "string", "description": "Owner username"},
-        "project": {"type": "string", "description": "Project title"},
-        "start_date": {"type": "string", "description": "Start date (YYYY-MM-DD)"},
-        "end_date": {"type": "string", "description": "End date (YYYY-MM-DD)"}
-    },
-    "required": ["username", "project", "start_date", "end_date"]
-}
-
 
 # ==============================================================================
 # Master Tools Registry List & Hermes Entrypoint
@@ -554,11 +423,6 @@ ALL_TOOLS = (
     ("sms_toggle_reminder", SMS_TOGGLE_SCHEMA, handle_sms_toggle_reminder, "🔀"),
     ("sms_logs", SMS_LOGS_SCHEMA, handle_sms_logs, "🧾"),
     ("sms_quota", SMS_QUOTA_SCHEMA, handle_sms_quota, "📊"),
-
-    # WHS Tools
-    ("whs_add_report", WHS_ADD_REPORT_SCHEMA, handle_whs_add_report, "⏱️"),
-    ("whs_list_reports", WHS_LIST_REPORTS_SCHEMA, handle_whs_list_reports, "📑"),
-    ("whs_add_plan", WHS_ADD_PLAN_SCHEMA, handle_whs_add_plan, "📅"),
 )
 
 def register_tools(ctx) -> None:

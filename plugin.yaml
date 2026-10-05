@@ -1,6 +1,6 @@
 name: cloud_tools
-version: 1.1.0
-description: "Hermes Cloud Tools Bundle — integrates Cloudflare KV, Diary, SMS, and Work Hour System."
+version: 1.2.0
+description: "Hermes Cloud Tools Bundle — integrates Cloudflare KV, Diary, and SMS."
 author: Agnes & fietiger
 kind: backend
 provides_tools:
@@ -19,6 +19,3 @@ provides_tools:
   - sms_toggle_reminder
   - sms_logs
   - sms_quota
-  - whs_add_report
-  - whs_list_reports
-  - whs_add_plan
