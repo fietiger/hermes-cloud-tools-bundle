@@ -1,4 +1,3 @@
-import base64
 import functools
 import json
 import os
@@ -405,7 +404,8 @@ SMS_QUOTA_SCHEMA = {
 # ==============================================================================
 WHS_DEFAULT_URL = "https://work-hour-system.fietiger.workers.dev"
 
-def _whs_auth_header() -> str:
+def _whs_creds() -> tuple:
+    """WHS_USERNAME / WHS_PASSWORD, or a named error naming both."""
     user = os.getenv("WHS_USERNAME")
     pwd = os.getenv("WHS_PASSWORD")
     if not user or not pwd:
@@ -413,14 +413,47 @@ def _whs_auth_header() -> str:
             "WHS credentials missing: set both the WHS_USERNAME and WHS_PASSWORD "
             "environment variables"
         )
-    token = base64.b64encode(f"{user}:{pwd}".encode()).decode()
-    return "Basic " + token
+    return user, pwd
+
+def _whs_token() -> str:
+    """Log in once per process and cache the Bearer token.
+
+    The server issues a token from POST /api/login and expects it back as
+    ``Authorization: Bearer <token>`` on every later call (see
+    /opt/data/clients/whs_client.py). It does NOT accept HTTP Basic.
+    """
+    global _WHS_TOKEN
+    if _WHS_TOKEN:
+        return _WHS_TOKEN
+    user, pwd = _whs_creds()
+    url = f"{os.getenv('WHS_URL', WHS_DEFAULT_URL).rstrip('/')}/api/login"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"username": user, "password": pwd}).encode(),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "hermes-agent-tool/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"WHS login failed: HTTP {e.code} (check WHS_USERNAME/WHS_PASSWORD)")
+    except Exception as e:
+        raise RuntimeError(f"WHS login failed: {type(e).__name__}: {e}")
+    token = body.get("token") if isinstance(body, dict) else None
+    if not token:
+        raise RuntimeError("WHS login returned no token — server auth scheme may have changed")
+    _WHS_TOKEN = token
+    return token
+
+_WHS_TOKEN: Optional[str] = None
 
 def _whs_req(method: str, path: str, body: Any = None) -> Dict[str, Any]:
     url = f"{os.getenv('WHS_URL', WHS_DEFAULT_URL).rstrip('/')}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", _whs_auth_header())
+    req.add_header("Authorization", f"Bearer {_whs_token()}")
     req.add_header("User-Agent", "hermes-agent-tool/1.0")
     if data:
         req.add_header("Content-Type", "application/json")
