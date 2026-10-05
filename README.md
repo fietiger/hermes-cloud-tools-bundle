@@ -27,8 +27,55 @@ Hermes Agent 原生通用扩展插件包，集成了 Cloudflare KV 存储、日�
 
 ## 安装与使用
 
-将本仓库克隆至 Hermes 插件目录即可自动生效：
+> **安装前请先阅读 [`skills/install-cloud-tools-bundle`](skills/install-cloud-tools-bundle/SKILL.md)。**
+> 本插件自带 `plugin.yaml`，**任何含有该文件的目录都会被当作插件发现**。
+> 旧版本残留的副本（包括 `plugins/tools/cloud_tools`、备份目录、
+> `installs/*/workspace` 快照）会各自注册一套同名工具，且互相漂移——
+> 实际加载哪一份无法从源码判断。该 skill 给出完整的清理、安装、启用、验证流程。
+
+### 手动安装
+
+`plugin.yaml` 位于**仓库根目录**，因此需要把插件负载复制到扁平路径下，
+不能直接把整个仓库克隆进 `plugins/`：
+
 ```bash
-git clone https://github.com/fietiger/hermes-cloud-tools-bundle.git ~/.hermes/plugins/cloud-tools-bundle
+SRC=/path/to/hermes-cloud-tools-bundle
+DEST="$HERMES_HOME/plugins/cloud_tools"      # $HERMES_HOME 默认 ~/.hermes
+rm -rf "$DEST" && mkdir -p "$DEST"
+cp "$SRC/plugins/cloud_tools/tools.py" "$SRC/plugins/cloud_tools/__init__.py" "$DEST/"
+cp "$SRC/plugin.yaml" "$DEST/plugin.yaml"
+find "$HERMES_HOME/plugins" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
 ```
-无需修改任何底层核心代码，Hermes Gateway 启动时将自动识别并注册全部工具。
+
+### 启用（opt-in，插件默认不启用）
+
+用户侧插件必须显式启用才会被加载，未启用时工具不会进入会话、且**不会报任何错**：
+
+```bash
+hermes plugins enable cloud_tools
+```
+
+该操作写入 `config.yaml` 的 `plugins.enabled`，**下一个新会话**才生效。
+
+### 验证
+
+```bash
+hermes plugins doctor cloud_tools     # 期望: registrations: 15 tool(s), 0 hook(s)
+```
+
+> `plugins doctor` 只校验 manifest 解析、import 与注册，**不校验 schema 结构**，
+> 因此它通过并不等于模型能正确调用该工具。
+
+### 凭据
+
+本插件**不携带任何凭据**。读取顺序为环境变量 `KVBOX_TOKEN` →
+`<HOME>/.kvbox_token`，两者都没有时报错并指明上述两种方式。
+
+---
+
+## 配套 Skills
+
+| Skill | 用途 |
+|---|---|
+| [`skills/install-cloud-tools-bundle`](skills/install-cloud-tools-bundle/SKILL.md) | 安装/升级前先清理旧副本，含验证与排查步骤 |
+| [`skills/kvbox-and-personal-services`](skills/kvbox-and-personal-services/SKILL.md) | 使用侧：kvbox 真实 key 布局、提醒中枢约定、工具报错时的正确反应 |
